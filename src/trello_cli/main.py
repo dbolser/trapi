@@ -19,6 +19,7 @@ app.add_typer(list_app, name="list")
 app.add_typer(card_app, name="card")
 
 console = Console()
+err_console = Console(stderr=True)
 state = {"json": False}
 
 
@@ -30,13 +31,13 @@ def main(json_output: bool = typer.Option(False, "--json", help="Output raw JSON
 def client() -> TrelloClient:
     creds = load_credentials()
     if creds is None:
-        console.print(SETUP_HELP, style="yellow", highlight=False)
+        err_console.print(SETUP_HELP, style="yellow", highlight=False)
         raise typer.Exit(1)
     return TrelloClient(*creds)
 
 
 def fail(err: TrelloError):
-    console.print(f"[red]error:[/red] {err}", highlight=False)
+    err_console.print(f"[red]error:[/red] {err}", highlight=False)
     raise typer.Exit(1)
 
 
@@ -100,15 +101,16 @@ def board_view(board: str = typer.Argument(help="Board id, shortLink, or name.")
         return b, lists, cards
 
     b, lists, cards = guard(go)
+    counts = {}
+    for card in cards:
+        counts[card["idList"]] = counts.get(card["idList"], 0) + 1
+    lists = [{**lst, "cardCount": counts.get(lst["id"], 0)} for lst in lists]
 
     def render(_):
-        counts = {}
-        for card in cards:
-            counts[card["idList"]] = counts.get(card["idList"], 0) + 1
         console.print(f"[bold]{b['name']}[/bold] — {b['url']}")
         table = Table("List", "Cards")
         for lst in lists:
-            table.add_row(lst["name"], str(counts.get(lst["id"], 0)))
+            table.add_row(lst["name"], str(lst["cardCount"]))
         console.print(table)
 
     emit({"board": b, "lists": lists}, render)
@@ -157,7 +159,7 @@ def card_list(board: str = typer.Argument(help="Board id, shortLink, or name."),
     def go():
         c = client()
         b = c.resolve_board(board)
-        lists = {l["id"]: l["name"] for l in c.get(f"/boards/{b['id']}/lists", fields="name")}
+        lists = {lst["id"]: lst["name"] for lst in c.get(f"/boards/{b['id']}/lists", fields="name")}
         if list_:
             lst = c.resolve_list(b["id"], list_)
             cards = c.get(f"/lists/{lst['id']}/cards",
@@ -172,7 +174,7 @@ def card_list(board: str = typer.Argument(help="Board id, shortLink, or name."),
     def render(_):
         table = Table("ID", "Name", "List", "Labels", "Due")
         for card in cards:
-            labels = ", ".join(l["name"] or l["color"] for l in card["labels"])
+            labels = ", ".join(lab["name"] or lab["color"] for lab in card["labels"])
             due = (card["due"] or "")[:10]
             table.add_row(card["shortLink"], card["name"],
                           lists.get(card["idList"], "?"), labels, due)
@@ -203,13 +205,13 @@ def card_view(card: str = typer.Argument(help="Card id or shortLink."),
         if data["due"]:
             console.print(f"Due: {data['due'][:10]}")
         if data["labels"]:
-            console.print("Labels: " + ", ".join(l["name"] or l["color"] for l in data["labels"]))
+            console.print("Labels: " + ", ".join(lab["name"] or lab["color"] for lab in data["labels"]))
         if data["members"]:
             console.print("Members: " + ", ".join(m["fullName"] for m in data["members"]))
         if data["desc"]:
             console.print(f"\n{data['desc']}")
         for act in reversed(acts):
-            who = act["memberCreator"]["fullName"]
+            who = (act.get("memberCreator") or {}).get("fullName", "unknown")
             when = act["date"][:16].replace("T", " ")
             console.print(f"\n[cyan]{who}[/cyan] [dim]{when}[/dim]\n{act['data']['text']}")
 

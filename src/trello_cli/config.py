@@ -24,7 +24,10 @@ def load_credentials() -> tuple[str, str] | None:
     Precedence: real environment > ./.env > ~/.config/trello-cli/.env
     """
     load_dotenv(Path.cwd() / ".env")
-    load_dotenv(Path.home() / ".config" / "trello-cli" / ".env")
+    try:
+        load_dotenv(Path.home() / ".config" / "trello-cli" / ".env")
+    except RuntimeError:  # home directory unresolvable (e.g. no $HOME)
+        pass
     key = os.environ.get("TRELLO_API_KEY")
     token = os.environ.get("TRELLO_TOKEN")
     if key and token:

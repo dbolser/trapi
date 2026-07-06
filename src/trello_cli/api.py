@@ -16,7 +16,16 @@ class TrelloClient:
 
     def request(self, method: str, path: str, **params: Any) -> Any:
         clean = {k: v for k, v in params.items() if v is not None}
-        resp = self._http.request(method, path, params={**self._auth, **clean})
+        # Write payloads go in the body: long values (card descriptions,
+        # comments) would exceed URL length limits as query params.
+        if method in ("POST", "PUT"):
+            kwargs: dict[str, Any] = {"params": self._auth, "data": clean}
+        else:
+            kwargs = {"params": {**self._auth, **clean}}
+        try:
+            resp = self._http.request(method, path, **kwargs)
+        except httpx.RequestError as e:
+            raise TrelloError(f"{method} {path}: {e}") from e
         if resp.status_code == 401:
             raise TrelloError(
                 f"Unauthorized ({resp.text.strip()}). "
