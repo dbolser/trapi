@@ -5,3 +5,4 @@ __pycache__/
 dist/
 takeout-*.zip
 Takeout/
+dist/

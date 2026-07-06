@@ -1,6 +1,6 @@
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__ = version("trello-cli")
+    __version__ = version("trapi-cli")
 except PackageNotFoundError:
     __version__ = "0+unknown"

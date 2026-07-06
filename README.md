@@ -1,12 +1,35 @@
-# trello-cli
+# trapi-cli
 
 A gh-style command line interface for Trello.
 
+> Distribution name `trapi-cli`; the installed command is `trello` and the
+> importable package is `trello_cli`.
+
 ## Install
 
+As a standalone CLI:
+
 ```sh
-uv tool install -e .
+uv tool install trapi-cli          # from PyPI
+uv tool install -e .               # from a local checkout (editable)
 ```
+
+As a dependency of another project (to reuse the client in code):
+
+```sh
+uv add trapi-cli
+```
+
+```python
+from trello_cli.api import TrelloClient
+from trello_cli.config import load_credentials
+
+client = TrelloClient(*load_credentials())
+client.get("/members/me")
+```
+
+The importable surface (`TrelloClient`, `load_credentials`, `match_ref`) exists
+for the CLI's own use — treat it as unstable until a 1.0 release.
 
 ## Setup
 
