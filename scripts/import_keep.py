@@ -19,6 +19,7 @@ import argparse
 import json
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,6 +59,11 @@ def card_name(note: dict) -> str:
 
 def note_desc(note: dict) -> str:
     text = note.get("textContent") or ""
+    links = [a for a in note.get("annotations") or []
+             if a.get("source") == "WEBLINK" and a.get("url")]
+    if links:
+        text += ("\n\n" if text else "") + "Links:\n" + "\n".join(
+            f"- [{a.get('title') or a['url']}]({a['url']})" for a in links)
     usec = note.get("userEditedTimestampUsec")
     footer = "\n\n---\n*Imported from Google Keep*"
     if usec:
@@ -116,11 +122,30 @@ def upload_attachment(c: TrelloClient, card_id: str, path: Path):
                           status=resp.status_code)
 
 
-def import_note(c: TrelloClient, note: dict, ctx: dict, dry: bool) -> str:
+def unique_names(notes: list[dict]) -> list[str]:
+    """Card name per note, disambiguating duplicate titles with the edit
+    date (and #n if still colliding) so reruns stay deterministic."""
+    names = [card_name(n) for n in notes]
+    counts = Counter(names)
+    seen: Counter = Counter()
+    out = []
+    for note, name in zip(notes, names):
+        if counts[name] > 1:
+            usec = note.get("userEditedTimestampUsec")
+            if usec:
+                edited = datetime.fromtimestamp(usec / 1e6, tz=timezone.utc).date()
+                name = f"{name} ({edited})"
+            seen[name] += 1
+            if seen[name] > 1:
+                name = f"{name} #{seen[name]}"
+        out.append(name)
+    return out
+
+
+def import_note(c: TrelloClient, note: dict, name: str, ctx: dict, dry: bool) -> str:
     """Import one note; returns 'created', 'skipped', or 'trashed'."""
     if note.get("isTrashed"):
         return "trashed"
-    name = card_name(note)
     if name in ctx["existing"]:
         return "skipped"
 
@@ -195,8 +220,8 @@ def main():
                                  fields="name")}
 
     tally = {"created": 0, "skipped": 0, "trashed": 0}
-    for note in notes:
-        tally[import_note(c, note, ctx, args.dry_run)] += 1
+    for note, name in zip(notes, unique_names(notes)):
+        tally[import_note(c, note, name, ctx, args.dry_run)] += 1
 
     print(f"\nDone: {tally['created']} imported, {tally['skipped']} already present, "
           f"{tally['trashed']} trashed notes ignored")
