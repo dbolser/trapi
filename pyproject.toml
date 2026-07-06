@@ -1,0 +1,21 @@
+[project]
+name = "trello-cli"
+version = "0.1.0"
+description = "A gh-style command line interface for Trello"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.12",
+    "httpx>=0.27",
+    "rich>=13",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+trello = "trello_cli.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trello_cli"]
