@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 import httpx
@@ -47,18 +48,40 @@ class TrelloClient:
     # -- name-or-id resolution -------------------------------------------
 
     def resolve_board(self, ref: str) -> dict:
-        """Accept a board id, shortLink, or (partial) name."""
-        boards = self.get("/members/me/boards", filter="all",
+        """Accept a board id, shortLink, or (partial) name.
+
+        Ids and shortLinks resolve directly (works for archived boards too);
+        names match against open boards only.
+        """
+        if re.fullmatch(r"[0-9a-fA-F]{24}|[A-Za-z0-9]{8}", ref):
+            board = self._try_get(f"/boards/{ref}", "name,shortLink,closed,url")
+            if board:
+                return board
+        boards = self.get("/members/me/boards", filter="open",
                           fields="name,shortLink,closed,url")
-        return _match(ref, boards, "board")
+        return match_ref(ref, boards, "board")
 
     def resolve_list(self, board_id: str, ref: str) -> dict:
-        """Accept a list id or (partial) name within a board."""
+        """Accept a list id or (partial) name within a board.
+
+        Ids resolve directly (works for archived lists too); names match
+        against the board's open lists.
+        """
+        if re.fullmatch(r"[0-9a-fA-F]{24}", ref):
+            lst = self._try_get(f"/lists/{ref}", "name")
+            if lst:
+                return lst
         lists = self.get(f"/boards/{board_id}/lists", fields="name")
-        return _match(ref, lists, "list")
+        return match_ref(ref, lists, "list")
+
+    def _try_get(self, path: str, fields: str) -> dict | None:
+        try:
+            return self.get(path, fields=fields)
+        except TrelloError:
+            return None
 
 
-def _match(ref: str, items: list[dict], kind: str) -> dict:
+def match_ref(ref: str, items: list[dict], kind: str) -> dict:
     for item in items:
         if ref in (item["id"], item.get("shortLink")):
             return item

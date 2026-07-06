@@ -5,7 +5,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .api import TrelloClient, TrelloError
+from . import __version__
+from .api import TrelloClient, TrelloError, match_ref
 from .config import SETUP_HELP, load_credentials
 
 app = typer.Typer(help="A gh-style CLI for Trello.", no_args_is_help=True)
@@ -23,8 +24,16 @@ err_console = Console(stderr=True)
 state = {"json": False}
 
 
+def _show_version(value: bool):
+    if value:
+        print(__version__)
+        raise typer.Exit()
+
+
 @app.callback()
-def main(json_output: bool = typer.Option(False, "--json", help="Output raw JSON.")):
+def main(json_output: bool = typer.Option(False, "--json", help="Output raw JSON."),
+         version: bool = typer.Option(False, "--version", callback=_show_version,
+                                      is_eager=True, help="Show version and exit.")):
     state["json"] = json_output
 
 
@@ -55,6 +64,11 @@ def guard(fn):
         return fn()
     except TrelloError as e:
         fail(e)
+
+
+def fmt_labels(labels: list[dict]) -> str:
+    # A label can lack both a name and a color.
+    return ", ".join(lab["name"] or lab["color"] or "(unnamed)" for lab in labels)
 
 
 # -- auth ---------------------------------------------------------------
@@ -159,9 +173,10 @@ def card_list(board: str = typer.Argument(help="Board id, shortLink, or name."),
     def go():
         c = client()
         b = c.resolve_board(board)
-        lists = {lst["id"]: lst["name"] for lst in c.get(f"/boards/{b['id']}/lists", fields="name")}
+        board_lists = c.get(f"/boards/{b['id']}/lists", fields="name")
+        lists = {lst["id"]: lst["name"] for lst in board_lists}
         if list_:
-            lst = c.resolve_list(b["id"], list_)
+            lst = match_ref(list_, board_lists, "list")
             cards = c.get(f"/lists/{lst['id']}/cards",
                           fields="name,shortLink,idList,due,labels")
         else:
@@ -174,7 +189,7 @@ def card_list(board: str = typer.Argument(help="Board id, shortLink, or name."),
     def render(_):
         table = Table("ID", "Name", "List", "Labels", "Due")
         for card in cards:
-            labels = ", ".join(lab["name"] or lab["color"] for lab in card["labels"])
+            labels = fmt_labels(card["labels"])
             due = (card["due"] or "")[:10]
             table.add_row(card["shortLink"], card["name"],
                           lists.get(card["idList"], "?"), labels, due)
@@ -205,7 +220,7 @@ def card_view(card: str = typer.Argument(help="Card id or shortLink."),
         if data["due"]:
             console.print(f"Due: {data['due'][:10]}")
         if data["labels"]:
-            console.print("Labels: " + ", ".join(lab["name"] or lab["color"] for lab in data["labels"]))
+            console.print("Labels: " + fmt_labels(data["labels"]))
         if data["members"]:
             console.print("Members: " + ", ".join(m["fullName"] for m in data["members"]))
         if data["desc"]:
@@ -243,7 +258,9 @@ def card_edit(card: str,
               due: str = typer.Option(None, "--due"),
               clear_due: bool = typer.Option(False, "--clear-due")):
     """Edit a card's name, description, or due date."""
-    if not any([name, desc is not None, due, clear_due]):
+    if clear_due and due:
+        fail(TrelloError("--due and --clear-due are mutually exclusive."))
+    if name is None and desc is None and due is None and not clear_due:
         fail(TrelloError("Nothing to change — pass --name, --desc, --due, or --clear-due."))
 
     def go():
@@ -300,17 +317,17 @@ def search(query: str):
                                      board_fields="name,shortLink,shortUrl"))
 
     def render(res):
-        if res.get("boards"):
-            table = Table("ID", "Board", "URL")
-            for b in res["boards"]:
-                table.add_row(b["shortLink"], b["name"], b["shortUrl"])
+        found = False
+        for key, title in (("boards", "Board"), ("cards", "Card")):
+            items = res.get(key)
+            if not items:
+                continue
+            found = True
+            table = Table("ID", title, "URL")
+            for item in items:
+                table.add_row(item["shortLink"], item["name"], item["shortUrl"])
             console.print(table)
-        if res.get("cards"):
-            table = Table("ID", "Card", "URL")
-            for c in res["cards"]:
-                table.add_row(c["shortLink"], c["name"], c["shortUrl"])
-            console.print(table)
-        if not res.get("boards") and not res.get("cards"):
+        if not found:
             console.print("No results.")
 
     emit(res, render)
