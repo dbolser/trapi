@@ -9,6 +9,10 @@ BASE_URL = "https://api.trello.com/1"
 class TrelloError(Exception):
     """API or lookup error with a user-facing message."""
 
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
 
 class TrelloClient:
     def __init__(self, key: str, token: str):
@@ -30,10 +34,12 @@ class TrelloClient:
         if resp.status_code == 401:
             raise TrelloError(
                 f"Unauthorized ({resp.text.strip()}). "
-                "Check TRELLO_API_KEY / TRELLO_TOKEN — see 'trello auth status'."
+                "Check TRELLO_API_KEY / TRELLO_TOKEN — see 'trello auth status'.",
+                status=401,
             )
         if resp.is_error:
-            raise TrelloError(f"{method} {path}: HTTP {resp.status_code} — {resp.text.strip()}")
+            raise TrelloError(f"{method} {path}: HTTP {resp.status_code} — {resp.text.strip()}",
+                              status=resp.status_code)
         return resp.json()
 
     def get(self, path: str, **params: Any) -> Any:
@@ -77,8 +83,12 @@ class TrelloClient:
     def _try_get(self, path: str, fields: str) -> dict | None:
         try:
             return self.get(path, fields=fields)
-        except TrelloError:
-            return None
+        except TrelloError as e:
+            # Only "not a real id" outcomes fall back to name matching;
+            # auth and transport failures should surface immediately.
+            if e.status in (400, 404):
+                return None
+            raise
 
 
 def match_ref(ref: str, items: list[dict], kind: str) -> dict:
