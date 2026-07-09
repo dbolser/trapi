@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from trello_cli.config import load_credentials
@@ -13,7 +15,9 @@ def clean_sources(monkeypatch, tmp_path):
     cwd.mkdir()
     home.mkdir()
     monkeypatch.chdir(cwd)
-    monkeypatch.setenv("HOME", str(home))
+    # Patch Path.home rather than $HOME: Windows resolves the home
+    # directory from USERPROFILE, not HOME.
+    monkeypatch.setattr(Path, "home", lambda: home)
     return cwd, home
 
 
