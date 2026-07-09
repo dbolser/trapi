@@ -14,10 +14,12 @@ auth_app = typer.Typer(help="Check authentication.", no_args_is_help=True)
 board_app = typer.Typer(help="Work with boards.", no_args_is_help=True)
 list_app = typer.Typer(help="Work with lists.", no_args_is_help=True)
 card_app = typer.Typer(help="Work with cards.", no_args_is_help=True)
+label_app = typer.Typer(help="Work with labels.", no_args_is_help=True)
 app.add_typer(auth_app, name="auth")
 app.add_typer(board_app, name="board")
 app.add_typer(list_app, name="list")
 app.add_typer(card_app, name="card")
+app.add_typer(label_app, name="label")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -69,6 +71,10 @@ def guard(fn):
 def fmt_labels(labels: list[dict]) -> str:
     # A label can lack both a name and a color.
     return ", ".join(lab["name"] or lab["color"] or "(unnamed)" for lab in labels)
+
+
+COLOR_HELP = "green, yellow, orange, red, purple, blue, sky, lime, pink, or black."
+LABEL_REF_HELP = "Label id, name, or color."
 
 
 # -- auth ---------------------------------------------------------------
@@ -238,13 +244,17 @@ def card_add(name: str,
              board: str = typer.Option(..., "--board", "-b"),
              list_: str = typer.Option(..., "--list", "-l"),
              desc: str = typer.Option(None, "--desc", "-d"),
-             due: str = typer.Option(None, "--due", help="Due date, e.g. 2026-07-31.")):
+             due: str = typer.Option(None, "--due", help="Due date, e.g. 2026-07-31."),
+             label: list[str] = typer.Option(None, "--label",
+                                             help=f"{LABEL_REF_HELP} Repeatable.")):
     """Create a card."""
     def go():
         c = client()
         b = c.resolve_board(board)
         lst = c.resolve_list(b["id"], list_)
-        return c.post("/cards", idList=lst["id"], name=name, desc=desc, due=due)
+        ids = [c.resolve_label(b["id"], ref)["id"] for ref in label or []]
+        return c.post("/cards", idList=lst["id"], name=name, desc=desc, due=due,
+                      idLabels=",".join(ids) if ids else None)
 
     card = guard(go)
     emit(card, lambda card: console.print(
@@ -298,12 +308,133 @@ def card_archive(card: str,
     emit(updated, lambda u: console.print(f"[green]✓[/green] {verb} [bold]{u['name']}[/bold]"))
 
 
+@card_app.command("label")
+def card_label(card: str = typer.Argument(help="Card id or shortLink."),
+               add: list[str] = typer.Option(None, "--add", "-a",
+                                             help=f"{LABEL_REF_HELP} Repeatable."),
+               remove: list[str] = typer.Option(None, "--remove", "-r",
+                                                help=f"{LABEL_REF_HELP} Repeatable.")):
+    """Add or remove labels on a card."""
+    if not add and not remove:
+        fail(TrelloError("Nothing to change — pass --add and/or --remove."))
+
+    def go():
+        c = client()
+        current = c.get(f"/cards/{card}", fields="idBoard,name,idLabels")
+        have = set(current["idLabels"])
+        # Resolve everything up front so a bad ref fails the whole command
+        # before any labels are touched.
+        to_add = [c.resolve_label(current["idBoard"], ref) for ref in add or []]
+        to_remove = [c.resolve_label(current["idBoard"], ref) for ref in remove or []]
+        added, removed = [], []
+        for lab in to_add:
+            if lab["id"] not in have:
+                c.post(f"/cards/{card}/idLabels", value=lab["id"])
+                have.add(lab["id"])
+                added.append(lab)
+        for lab in to_remove:
+            if lab["id"] in have:
+                c.delete(f"/cards/{card}/idLabels/{lab['id']}")
+                have.discard(lab["id"])
+                removed.append(lab)
+        return current, added, removed
+
+    current, added, removed = guard(go)
+
+    def render(_):
+        changes = []
+        if added:
+            changes.append(f"added {fmt_labels(added)}")
+        if removed:
+            changes.append(f"removed {fmt_labels(removed)}")
+        summary = "; ".join(changes) if changes else "no changes needed"
+        console.print(f"[green]✓[/green] [bold]{current['name']}[/bold]: {summary}")
+
+    emit({"card": current, "added": added, "removed": removed}, render)
+
+
 @card_app.command("comment")
 def card_comment(card: str,
                  message: str = typer.Option(..., "--message", "-m")):
     """Comment on a card."""
     act = guard(lambda: client().post(f"/cards/{card}/actions/comments", text=message))
     emit(act, lambda a: console.print("[green]✓[/green] Comment added"))
+
+
+# -- label --------------------------------------------------------------
+
+@label_app.command("list")
+def label_list(board: str = typer.Option(..., "--board", "-b", help="Board id, shortLink, or name.")):
+    """List the labels on a board."""
+    def go():
+        c = client()
+        b = c.resolve_board(board)
+        return c.get(f"/boards/{b['id']}/labels", fields="name,color")
+
+    labels = guard(go)
+
+    def render(labels):
+        table = Table("ID", "Name", "Color")
+        for lab in labels:
+            table.add_row(lab["id"], lab["name"], lab["color"] or "")
+        console.print(table)
+
+    emit(labels, render)
+
+
+@label_app.command("add")
+def label_add(name: str,
+              board: str = typer.Option(..., "--board", "-b", help="Board id, shortLink, or name."),
+              color: str = typer.Option(None, "--color", "-c", help=COLOR_HELP)):
+    """Create a label on a board."""
+    def go():
+        c = client()
+        b = c.resolve_board(board)
+        return c.post("/labels", name=name, color=color, idBoard=b["id"])
+
+    lab = guard(go)
+    emit(lab, lambda lab: console.print(
+        f"[green]✓[/green] Created label [bold]{fmt_labels([lab])}[/bold]"))
+
+
+@label_app.command("edit")
+def label_edit(label: str = typer.Argument(help=LABEL_REF_HELP),
+               board: str = typer.Option(..., "--board", "-b", help="Board id, shortLink, or name."),
+               name: str = typer.Option(None, "--name"),
+               color: str = typer.Option(None, "--color", "-c", help=COLOR_HELP)):
+    """Rename or recolor a label."""
+    if name is None and color is None:
+        fail(TrelloError("Nothing to change — pass --name or --color."))
+
+    def go():
+        c = client()
+        b = c.resolve_board(board)
+        lab = c.resolve_label(b["id"], label)
+        return c.put(f"/labels/{lab['id']}", name=name, color=color)
+
+    updated = guard(go)
+    emit(updated, lambda u: console.print(
+        f"[green]✓[/green] Updated label [bold]{fmt_labels([u])}[/bold]"))
+
+
+@label_app.command("delete")
+def label_delete(label: str = typer.Argument(help=LABEL_REF_HELP),
+                 board: str = typer.Option(..., "--board", "-b", help="Board id, shortLink, or name."),
+                 yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation.")):
+    """Delete a label from a board (removes it from every card)."""
+    def go():
+        c = client()
+        b = c.resolve_board(board)
+        lab = c.resolve_label(b["id"], label)
+        # Confirm after resolving so the prompt names the actual label.
+        if not yes:
+            typer.confirm(f"Delete label '{fmt_labels([lab])}'?", abort=True)
+        c.delete(f"/labels/{lab['id']}")
+        return lab
+
+    lab = guard(go)
+    emit(lab, lambda lab: console.print(
+        f"[green]✓[/green] Deleted label [bold]{fmt_labels([lab])}[/bold]"))
 
 
 # -- search -------------------------------------------------------------

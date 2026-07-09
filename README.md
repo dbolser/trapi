@@ -63,6 +63,14 @@ trello card move abc123XY -l Done
 trello card archive abc123XY          # --undo to restore
 trello card comment abc123XY -m "done in #42"
 
+trello label list -b "My Board"
+trello label add "Urgent" -b "My Board" -c red
+trello label edit Urgent -b "My Board" --name "On Fire" -c orange
+trello label delete "On Fire" -b "My Board"     # -y to skip confirmation
+trello card label abc123XY -a Urgent            # labels by id, name, or color
+trello card label abc123XY -a green -r Urgent
+trello card add "Fix it" -b "My Board" -l "To Do" --label Urgent --label green
+
 trello search "invoice"
 ```
 
