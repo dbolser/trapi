@@ -94,6 +94,9 @@ class TrelloClient:
             by_color = [lab for lab in labels if lab["color"] == ref.lower()]
             if len(by_color) == 1:
                 return by_color[0]
+            if len(by_color) > 1:
+                names = ", ".join(lab["name"] or "(unnamed)" for lab in by_color[:8])
+                raise TrelloError(f"Ambiguous label '{ref}' — matches by color: {names}")
             raise
 
     def _try_get(self, path: str, fields: str) -> dict | None:

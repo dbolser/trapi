@@ -322,15 +322,17 @@ def card_label(card: str = typer.Argument(help="Card id or shortLink."),
         c = client()
         current = c.get(f"/cards/{card}", fields="idBoard,name,idLabels")
         have = set(current["idLabels"])
+        # Resolve everything up front so a bad ref fails the whole command
+        # before any labels are touched.
+        to_add = [c.resolve_label(current["idBoard"], ref) for ref in add or []]
+        to_remove = [c.resolve_label(current["idBoard"], ref) for ref in remove or []]
         added, removed = [], []
-        for ref in add or []:
-            lab = c.resolve_label(current["idBoard"], ref)
+        for lab in to_add:
             if lab["id"] not in have:
                 c.post(f"/cards/{card}/idLabels", value=lab["id"])
                 have.add(lab["id"])
                 added.append(lab)
-        for ref in remove or []:
-            lab = c.resolve_label(current["idBoard"], ref)
+        for lab in to_remove:
             if lab["id"] in have:
                 c.delete(f"/cards/{card}/idLabels/{lab['id']}")
                 have.discard(lab["id"])
@@ -420,13 +422,13 @@ def label_delete(label: str = typer.Argument(help=LABEL_REF_HELP),
                  board: str = typer.Option(..., "--board", "-b", help="Board id, shortLink, or name."),
                  yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation.")):
     """Delete a label from a board (removes it from every card)."""
-    if not yes:
-        typer.confirm(f"Delete label '{label}'?", abort=True)
-
     def go():
         c = client()
         b = c.resolve_board(board)
         lab = c.resolve_label(b["id"], label)
+        # Confirm after resolving so the prompt names the actual label.
+        if not yes:
+            typer.confirm(f"Delete label '{fmt_labels([lab])}'?", abort=True)
         c.delete(f"/labels/{lab['id']}")
         return lab
 
