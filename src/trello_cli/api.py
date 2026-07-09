@@ -88,7 +88,7 @@ class TrelloClient:
         labels = self.get(f"/boards/{board_id}/labels", fields="name,color")
         try:
             return match_ref(ref, labels, "label")
-        except TrelloError:
+        except TrelloError as e:
             # Labels often have a color but no name; let 'green' find the
             # (single) green label when no name matched.
             by_color = [lab for lab in labels if lab["color"] == ref.lower()]
@@ -96,7 +96,7 @@ class TrelloClient:
                 return by_color[0]
             if len(by_color) > 1:
                 names = ", ".join(lab["name"] or "(unnamed)" for lab in by_color[:8])
-                raise TrelloError(f"Ambiguous label '{ref}' — matches by color: {names}")
+                raise TrelloError(f"Ambiguous label '{ref}' — matches by color: {names}") from e
             raise
 
     def _try_get(self, path: str, fields: str) -> dict | None:
@@ -111,6 +111,9 @@ class TrelloClient:
 
 
 def match_ref(ref: str, items: list[dict], kind: str) -> dict:
+    if not ref:
+        # An empty ref would exact-match every unnamed item (e.g. labels).
+        raise TrelloError(f"Empty {kind} reference.")
     for item in items:
         if ref in (item["id"], item.get("shortLink")):
             return item
