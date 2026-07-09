@@ -51,6 +51,9 @@ class TrelloClient:
     def put(self, path: str, **params: Any) -> Any:
         return self.request("PUT", path, **params)
 
+    def delete(self, path: str, **params: Any) -> Any:
+        return self.request("DELETE", path, **params)
+
     # -- name-or-id resolution -------------------------------------------
 
     def resolve_board(self, ref: str) -> dict:
@@ -80,6 +83,19 @@ class TrelloClient:
         lists = self.get(f"/boards/{board_id}/lists", fields="name")
         return match_ref(ref, lists, "list")
 
+    def resolve_label(self, board_id: str, ref: str) -> dict:
+        """Accept a label id, (partial) name, or color within a board."""
+        labels = self.get(f"/boards/{board_id}/labels", fields="name,color")
+        try:
+            return match_ref(ref, labels, "label")
+        except TrelloError:
+            # Labels often have a color but no name; let 'green' find the
+            # (single) green label when no name matched.
+            by_color = [lab for lab in labels if lab["color"] == ref.lower()]
+            if len(by_color) == 1:
+                return by_color[0]
+            raise
+
     def _try_get(self, path: str, fields: str) -> dict | None:
         try:
             return self.get(path, fields=fields)
@@ -95,10 +111,10 @@ def match_ref(ref: str, items: list[dict], kind: str) -> dict:
     for item in items:
         if ref in (item["id"], item.get("shortLink")):
             return item
-    exact = [i for i in items if i["name"].lower() == ref.lower()]
+    exact = [i for i in items if (i["name"] or "").lower() == ref.lower()]
     if len(exact) == 1:
         return exact[0]
-    partial = [i for i in items if ref.lower() in i["name"].lower()]
+    partial = [i for i in items if i["name"] and ref.lower() in i["name"].lower()]
     if len(partial) == 1:
         return partial[0]
     if not exact and not partial:
